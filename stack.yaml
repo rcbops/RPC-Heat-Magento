@@ -54,8 +54,8 @@ resources:
       length: 32
       sequence: lettersdigits
 
-  # Haproxy security group
-  haproxy-security:
+  # Security group
+  secgroup:
     type: OS::Neutron::SecurityGroup
     properties:
       name:
@@ -69,11 +69,17 @@ resources:
       rules:
         - protocol: icmp
         - protocol: tcp
+          port_range_min: 22
+          port_range_max: 22
+        - protocol: tcp
           port_range_min: 443
           port_range_max: 443
         - protocol: tcp
           port_range_min: 80
           port_range_max: 80
+        - protocol: tcp
+          port_range_min: 4505
+          port_range_max: 4506
 
   # Keypair for communicating between nodes within the stack.
   # Will allow minions to ssh into the master and vice versa.
@@ -135,6 +141,8 @@ resources:
     properties:
       network_id: 
         get_resource: net
+      security_groups:
+        - get_resource: secgroup
 
   galera:
     type: OS::Heat::ResourceGroup
@@ -418,6 +426,8 @@ resources:
           minion-config:
             get_resource: config-salt-minion
           minion-roles: "web"
+          security-group:
+            get_resource: secgroup
 
   # Floating ip for haproxy node
   minion-haproxy-ip:
@@ -433,8 +443,7 @@ resources:
       network_id: 
         get_resource: net
       security_groups:
-        - default
-        - get_resource: haproxy-security
+        - get_resource: secgroup
 
   # haproxy minion
   minion-haproxy:
