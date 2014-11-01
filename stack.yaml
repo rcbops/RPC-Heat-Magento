@@ -432,9 +432,9 @@ resources:
     properties:
       network_id: 
         get_resource: net
-        security_groups:
-          - default
-          - get_resource: haproxy-security
+      security_groups:
+        - default
+        - get_resource: haproxy-security
 
   # haproxy minion
   minion-haproxy:
