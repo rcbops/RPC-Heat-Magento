@@ -78,8 +78,14 @@ resources:
           port_range_min: 80
           port_range_max: 80
         - protocol: tcp
+          port_range_min: 3306
+          port_range_max: 3306
+        - protocol: tcp
           port_range_min: 4505
           port_range_max: 4506
+        - protocol: tcp
+          port_range_min: 30865
+          port_range_max: 30865
 
   # Keypair for communicating between nodes within the stack.
   # Will allow minions to ssh into the master and vice versa.
@@ -144,32 +150,6 @@ resources:
       security_groups:
         - get_resource: secgroup
 
-  galera:
-    type: OS::Heat::ResourceGroup
-    depends_on: net
-    properties:
-      count: 1
-      resource_def:
-        type: Db::Galera
-        properties:
-          keyname:
-            get_param: keyname
-          image:
-            get_param: image
-          floating-network-id:
-            get_param: floating-network-id
-          db-username: magento-stack
-          db-user-password:
-            get_attr:
-              - secret
-              - value
-          db-remotehost: '%'
-          apps-network:
-            get_resource: net
-          database: magento
-          flavor:
-            get_param: flavor
-
   # Software configuration script for the salt-master node
   # Installs salt-master, sets permission on some personality files
   # and uses git to clone any provided state/formula repos
@@ -208,6 +188,7 @@ resources:
 
         mv /srv/salt/sync-formula /srv/salt/sync
         mv /srv/salt/magento-formula /srv/salt/magento
+        mv /srv/salt/mysql-formula /srv/salt/mysql
 
         # Finally - Restart salt service
         service salt-master restart
@@ -266,8 +247,9 @@ resources:
             - coms
             - public_key
         state_repos: |
-          https://github.com/absalon-james/sync.git
-          https://github.com/absalon-james/magento.git
+          https://github.com/rcbops/sync-formula.git
+          https://github.com/rcbops/mysql-formula.git
+          https://github.com/rcbops/magento-formula.git
       config:
         get_resource: config-salt-master
       server:
@@ -312,6 +294,9 @@ resources:
             'roles:haproxy':
               - match: grain
               - magento.haproxy
+            'roles:db':
+              - match: grain
+              - magento.db
 
         # The top.sls file for salt pillars.
         # Dictates which minions get which pillars.
@@ -320,6 +305,9 @@ resources:
             '*':
               - app
             'roles:web':
+              - match: grain
+              - magento
+            'roles:db':
               - match: grain
               - magento
 
@@ -356,11 +344,7 @@ resources:
                 db:
                   user: magento-stack
                   password: $pw
-                  write:
-                    port: 13306
-                  read:
-                    port: 3306
-                  
+                  host: "'%'"
             params:
               $pw:
                 get_attr:
@@ -510,24 +494,79 @@ resources:
       server:
         get_resource: minion-haproxy
 
+  # haproxy minion
+  minion-db:
+    type: OS::Nova::Server
+    depends_on: interface
+    properties:
+      flavor:
+        get_param: flavor
+      image:
+        get_param: image
+      name:
+        str_replace:
+          template: magento-$stackstr-db
+          params:
+            $stackstr:
+              get_attr:
+                - stack-string
+                - value
+      personality:
+
+        # Private key for node to node communication
+        /root/.ssh/coms_rsa:
+          get_attr:
+            - coms
+            - private_key
+
+        # Set the salt role to haproxy
+        /etc/salt/grains: |
+          roles:
+            - db
+
+      networks:
+        - network:
+            get_resource: net
+
+      security_groups:
+        - get_resource: secgroup
+
+      # Needs to be SOFTWARE_CONFIG when using SoftwareConfigs
+      user_data_format: SOFTWARE_CONFIG
+
+  # Deploys the salt-minion software config to the haproxy node.
+  deploy-db:
+    type: OS::Heat::SoftwareDeployment
+    depends_on: deploy-salt-master
+    properties:
+      input_values:
+        public_key:
+          get_attr:
+            - coms
+            - public_key
+        master:
+          get_attr:
+            - master
+            - first_address
+      config:
+        get_resource: config-salt-minion
+      server:
+        get_resource: minion-db
+
   # SoftwareConfig that is to run on master.
   # Executes a salt state.highstate on all attached minions.
   config-deploy:
     type: OS::Heat::SoftwareConfig
     properties:
       group: script
-      inputs:
-        - name: db
-        - name: haproxy
       config: |
         #!/bin/bash
-        echo "    host: $db" >> /srv/pillar/magento.sls
-        echo "  haproxy: {host: $haproxy}" >> /srv/pillar/magento.sls
+        cd /srv/salt/sync/files/csync2/
+        bash generate_key.sh
         salt '*' saltutil.refresh_pillar
         salt '*' mine.update
         salt '*' state.highstate
         salt -G roles:web service.start lsyncd
-        sudo salt --async $(sudo salt -G roles:web test.ping | head -1  | sed 's/://') cmd.run "echo 'Running fix_tables' && bash fix_tables.sh &"
 
   # Deploys the the deploy softwareconfig
   # All minions should be spun up and running salt-minion
@@ -539,26 +578,11 @@ resources:
         get_resource: config-deploy
       server:
         get_resource: master
-      input_values:
-        db:
-          get_attr:
-            - galera
-            - haproxy-ip
-            - 0
-        haproxy:
-          get_attr:
-            - minion-haproxy-ip
-            - floating_ip_address
-        state_repos: |
-          https://github.com/absalon-james/mysql.git
-          https://github.com/absalon-james/sync.git
-          https://github.com/absalon-james/magento.git
-
     depends_on:
-      - galera
       - deploy-salt-master
       - minion-group-web
       - deploy-haproxy
+      - deploy-db
 
 outputs:
   master-ip:
