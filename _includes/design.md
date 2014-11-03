@@ -7,11 +7,6 @@ within the stack provide enhanced Cloud security. The database servers are
 isolated from the web tier DMZ, and only available through a bastion
 gateway load balancer to further protect data.
 
-- We utilize Galera clustering and MariaDB to provide true a
-multi-master MySQL backend for Magento. This allows the application to better 
-withstand the higher failure rates of commodity/older infrastructure found in 
-Cloud environments.
-
 - We have found that centralized network file servers have higher
 failure rates in cloud environments, are more difficult to ensure data
 integrity, and almost always suffer performance loss. Our architecture 
