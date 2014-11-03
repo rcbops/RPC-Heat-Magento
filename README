@@ -1,8 +1,0 @@
-Heat template for deploying magento with the following:
-  - 1 salt-master instance
-  - 1 nested stack with galera
-  - 1 haproxy instance w/ salt-minion
-  - n apache2/php5/memcached/magento instances with synchronized docroots
-
-Future:
-  - Possibly allow choice of flavor for each type of minion
