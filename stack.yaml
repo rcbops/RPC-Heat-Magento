@@ -2,11 +2,13 @@ heat_template_version: 2013-05-23
 
 description: |
   Deploys a salt-master and a number of salt-minions.
-  One minion will be an haproxy node.
-  One minion will be a database node.
-  A variable number of minions will be web nodes each with
+  One minion will be an web haproxy node.
+  One minion will be a db haproxy node.
+  One minion will be a database master node.
+  A variable number of minions will be database slave nodes.
+  A variable number of minions will be web nodes each with.
   apache2, php5, magento, memcached, php-apc, lsyncd, csync2, and xinetd.
-  Floating ips will be assigned to the salt-master and haproxy nodes.
+  Floating ips will be assigned to the salt-master and web-haproxy nodes.
 
 parameters:
 
@@ -25,11 +27,17 @@ parameters:
     label: External Network UUID
     description: UUID of the external network. The private network created by this stack will route to this network. Also, any floating ip's needed by this stack will come this network.
 
-  minion-count:
+  web-count:
     type: number
     default: 2
     label: Number of web servers.
     description: The number of web application servers.
+
+  slave-count:
+    type: number
+    default: 1
+    label: Number of database slaves.
+    description: The number of database slaves that are in addition to the database master.
 
   flavor:
     type: string
@@ -49,6 +57,14 @@ resources:
   # Will be used to generate a random password
   # 32 characters long consisting of alpha numeric characters
   secret:
+    type: OS::Heat::RandomString
+    properties:
+      length: 32
+      sequence: lettersdigits
+
+  # Will be used to generate a random password
+  # 32 characters long consisting of alpha numeric characters
+  replication-secret:
     type: OS::Heat::RandomString
     properties:
       length: 32
@@ -291,12 +307,18 @@ resources:
               - match: grain
               - magento.web
               - sync
-            'roles:haproxy':
+            'roles:web-haproxy':
               - match: grain
-              - magento.haproxy
-            'roles:db':
+              - magento.web.haproxy
+            'roles:db-master':
               - match: grain
-              - magento.db
+              - magento.db.master
+            'roles:db-slave':
+              - match: grain
+              - magento.db.slave
+            'roles:db-haproxy':
+              - match: grain
+              - magento.db.haproxy
 
         # The top.sls file for salt pillars.
         # Dictates which minions get which pillars.
@@ -304,11 +326,8 @@ resources:
           base:
             '*':
               - app
-            'roles:web':
-              - match: grain
-              - magento
-            'roles:db':
-              - match: grain
+            'G@roles:web or G@roles:db-master or G@roles:db-slave':
+              - match: compound
               - magento
 
         # The app pillar. Describe interfaces and salt-mine functions.
@@ -321,7 +340,6 @@ resources:
             network.interfaces: []
             grains.get: ['host']
           mine_interval: 1
-          magento_version: 1.9.0.1
           sync:
             group: magento
             includes:
@@ -341,15 +359,38 @@ resources:
           str_replace:
             template: |
               magento:
+                version: 1.9.0.1
+                slave:
+                  user: rep-slave
+                  password: $rep-pw
+                  host: "'%'"
                 db:
                   user: magento-stack
                   password: $pw
                   host: "'%'"
+                  write:
+                    host: $writehost
+                    port: 3306
+                  read:
+                    host: $readhost
+                    port: 3306
             params:
+              $rep-pw:
+                get_attr:
+                  - replication-secret
+                  - value
               $pw:
                 get_attr:
                   - secret
                   - value
+              $readhost:
+                get_attr:
+                  - minion-db-haproxy
+                  - first_address
+              $writehost:
+                get_attr:
+                  - minion-db-master
+                  - first_address
 
       # Get access from the master-port
       networks:
@@ -377,7 +418,7 @@ resources:
     depends_on: deploy-salt-master
     properties:
       count:
-        get_param: minion-count
+        get_param: web-count
       resource_def:
         type: Salt::Minion
         properties:
@@ -414,14 +455,14 @@ resources:
             get_resource: secgroup
 
   # Floating ip for haproxy node
-  minion-haproxy-ip:
+  minion-web-haproxy-ip:
     type: OS::Neutron::FloatingIP
     properties:
       floating_network_id: 
         get_param: floating-network-id
 
   # Port for haproxy node
-  minion-haproxy-port:
+  minion-web-haproxy-port:
     type: OS::Neutron::Port
     properties:
       network_id: 
@@ -429,8 +470,8 @@ resources:
       security_groups:
         - get_resource: secgroup
 
-  # haproxy minion
-  minion-haproxy:
+  # web haproxy minion
+  minion-web-haproxy:
     type: OS::Nova::Server
     depends_on: interface
     properties:
@@ -440,7 +481,7 @@ resources:
         get_param: image
       name:
         str_replace:
-          template: magento-$stackstr-haproxy
+          template: magento-$stackstr-web-haproxy
           params:
             $stackstr:
               get_attr:
@@ -457,26 +498,26 @@ resources:
         # Set the salt role to haproxy
         /etc/salt/grains: |
           roles:
-            - haproxy
+            - web-haproxy
       
       networks:
         - port:
-            get_resource: minion-haproxy-port
+            get_resource: minion-web-haproxy-port
 
       # Needs to be SOFTWARE_CONFIG when using SoftwareConfigs
       user_data_format: SOFTWARE_CONFIG
 
   # Associate haproxy floating ip to the port
-  minion-haproxy-floating-ip-ass: 
+  minion-web-haproxy-floating-ip-ass: 
     type: OS::Neutron::FloatingIPAssociation
     properties: 
       floatingip_id:
-        get_resource: minion-haproxy-ip
+        get_resource: minion-web-haproxy-ip
       port_id:
-        get_resource: minion-haproxy-port
+        get_resource: minion-web-haproxy-port
 
   # Deploys the salt-minion software config to the haproxy node.
-  deploy-haproxy:
+  deploy-web-haproxy:
     type: OS::Heat::SoftwareDeployment
     depends_on: deploy-salt-master
     properties:
@@ -492,10 +533,10 @@ resources:
       config:
         get_resource: config-salt-minion
       server:
-        get_resource: minion-haproxy
+        get_resource: minion-web-haproxy
 
-  # haproxy minion
-  minion-db:
+  # db-master minion
+  minion-db-master:
     type: OS::Nova::Server
     depends_on: interface
     properties:
@@ -505,7 +546,7 @@ resources:
         get_param: image
       name:
         str_replace:
-          template: magento-$stackstr-db
+          template: magento-$stackstr-db-master
           params:
             $stackstr:
               get_attr:
@@ -522,7 +563,7 @@ resources:
         # Set the salt role to haproxy
         /etc/salt/grains: |
           roles:
-            - db
+            - db-master
 
       networks:
         - network:
@@ -535,7 +576,7 @@ resources:
       user_data_format: SOFTWARE_CONFIG
 
   # Deploys the salt-minion software config to the haproxy node.
-  deploy-db:
+  deploy-db-master:
     type: OS::Heat::SoftwareDeployment
     depends_on: deploy-salt-master
     properties:
@@ -551,7 +592,111 @@ resources:
       config:
         get_resource: config-salt-minion
       server:
-        get_resource: minion-db
+        get_resource: minion-db-master
+
+  # db-master minion
+  minion-db-haproxy:
+    type: OS::Nova::Server
+    depends_on: interface
+    properties:
+      flavor:
+        get_param: flavor
+      image:
+        get_param: image
+      name:
+        str_replace:
+          template: magento-$stackstr-db-haproxy
+          params:
+            $stackstr:
+              get_attr:
+                - stack-string
+                - value
+      personality:
+
+        # Private key for node to node communication
+        /root/.ssh/coms_rsa:
+          get_attr:
+            - coms
+            - private_key
+
+        # Set the salt role to haproxy
+        /etc/salt/grains: |
+          roles:
+            - db-haproxy
+
+      networks:
+        - network:
+            get_resource: net
+
+      security_groups:
+        - get_resource: secgroup
+
+      # Needs to be SOFTWARE_CONFIG when using SoftwareConfigs
+      user_data_format: SOFTWARE_CONFIG
+
+  # Deploys the salt-minion software config to the haproxy node.
+  deploy-db-haproxy:
+    type: OS::Heat::SoftwareDeployment
+    depends_on: deploy-salt-master
+    properties:
+      input_values:
+        public_key:
+          get_attr:
+            - coms
+            - public_key
+        master:
+          get_attr:
+            - master
+            - first_address
+      config:
+        get_resource: config-salt-minion
+      server:
+        get_resource: minion-db-haproxy
+
+  # Deploys a group of (vms + software deployment).
+  # This group the varying number of database slaves.
+  # Each instance in this group will be an instance with salt-minion
+  # installed and will have the salt role of 'db-slave'
+  minion-group-db-slave:
+    type: OS::Heat::ResourceGroup
+    depends_on: deploy-salt-master
+    properties:
+      count:
+        get_param: slave-count
+      resource_def:
+        type: Salt::Minion
+        properties:
+          flavor:
+            get_param: flavor
+          stack-prefix:
+            str_replace:
+              template: magento-$stackstr-db-slave
+              params:
+                $stackstr:
+                  get_attr:
+                    - stack-string
+                    - value
+          private_key:
+            get_attr:
+              - coms
+              - private_key
+          public_key:
+            get_attr:
+              - coms
+              - public_key
+          image:
+            get_param: image
+          network:
+            get_resource: net
+          master:
+            get_attr:
+              - master
+              - first_address
+          minion-config:
+            get_resource: config-salt-minion
+          minion-roles: "db-slave"
+          security-group:
+            get_resource: secgroup
 
   # SoftwareConfig that is to run on master.
   # Executes a salt state.highstate on all attached minions.
@@ -563,10 +708,9 @@ resources:
         #!/bin/bash
         cd /srv/salt/sync/files/csync2/
         bash generate_key.sh
-        salt '*' saltutil.refresh_pillar
         salt '*' mine.update
-        salt '*' state.highstate
-        salt -G roles:web service.start lsyncd
+        salt-run state.sls magento.runner
+        salt -G roles:web state.sls magento.web.preinstall
 
   # Deploys the the deploy softwareconfig
   # All minions should be spun up and running salt-minion
@@ -581,8 +725,10 @@ resources:
     depends_on:
       - deploy-salt-master
       - minion-group-web
-      - deploy-haproxy
-      - deploy-db
+      - minion-group-db-slave
+      - deploy-web-haproxy
+      - deploy-db-haproxy
+      - deploy-db-master
 
 outputs:
   master-ip:
@@ -591,6 +737,20 @@ outputs:
       get_attr:
         - master-ip
         - floating_ip_address
+
+  database-writes:
+    description: The location for database writes. (Needed to finish magento installation)
+    value:
+      get_attr:
+        - minion-db-master
+        - first_address
+
+  database-reads:
+    description: The location for database reads. (Load balanced across db master and db slaves)
+    value:
+      get_attr:
+        - minion-db-haproxy
+        - first_address
   
   minion-web-ips:
     value:
@@ -598,10 +758,10 @@ outputs:
         - minion-group-web
         - minion-ip
 
-  minion-haproxy-ip:
+  minion-web-haproxy-ip:
     value:
       get_attr:
-        - minion-haproxy-ip
+        - minion-web-haproxy-ip
         - floating_ip_address
 
   magento-url:
@@ -612,7 +772,7 @@ outputs:
         params:
           $haproxyip:
             get_attr:
-              - minion-haproxy-ip
+              - minion-web-haproxy-ip
               - floating_ip_address
 
   magento-db-user:
