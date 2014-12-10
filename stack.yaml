@@ -108,7 +108,7 @@ resources:
   coms:
     type: OS::Nova::KeyPair
     properties:
-      save_private_key: true 
+      save_private_key: true
       name:
         str_replace:
           template: magento-$stackstr-coms
@@ -116,7 +116,7 @@ resources:
             $stackstr:
               get_attr:
                 - stack-string
-                - value 
+                - value
 
   # Private network for this stack
   net:
@@ -138,7 +138,7 @@ resources:
     type: OS::Neutron::Router
     properties:
       external_gateway_info:
-        network: 
+        network:
           get_param: floating-network-id
 
   # Router interface
@@ -147,21 +147,21 @@ resources:
     properties:
       router_id:
         get_resource: router
-      subnet_id: 
+      subnet_id:
         get_resource: subnet
 
   # One floating ip for the salt-master node
   master-ip:
     type: OS::Neutron::FloatingIP
     properties:
-      floating_network_id: 
+      floating_network_id:
         get_param: floating-network-id
 
   # One port for the salt-master node
   master-port:
     type: OS::Neutron::Port
     properties:
-      network_id: 
+      network_id:
         get_resource: net
       security_groups:
         - get_resource: secgroup
@@ -178,6 +178,14 @@ resources:
         - name: state_repos
       config: |
         #!/bin/bash
+        set -ex
+        logdir=/var/log/heat-deployments
+        prefix=${logdir}/config-salt-master
+        mkdir -p $logdir
+        exec &> >(tee -a ${prefix}.log)
+
+        [ -e ${prefix}.ran ] && exit 0
+        chmod -R 0600 ${logdir}
         chmod 0700 /root/.ssh/coms_rsa
         chmod 0600 /srv/pillar/magento.sls
 
@@ -186,11 +194,11 @@ resources:
 
         # Install git
         apt-get install -y git
-            
+
         # Install salt master
         echo "Install Salt Master"
-        curl -L http://bootstrap.saltstack.org | sh -s -- -M -N
-        mkdir /srv/salt
+        curl -L http://bootstrap.saltstack.org | sh -s -- -M -N git v2014.1.13
+        mkdir -p /srv/salt
         echo -e 'file_roots:\n  base:\n    - /srv/salt' >> /etc/salt/master
 
         # Clone state/formula repos in state root directory
@@ -209,6 +217,8 @@ resources:
         # Finally - Restart salt service
         service salt-master restart
 
+        touch ${prefix}.ran
+
   # Software configuration for salt minion
   # Installs salt-minion, sets up authentication from minion to master,
   # and sets permissions of any personality files.
@@ -221,26 +231,36 @@ resources:
         - name: master
       config: |
         #!/bin/bash
+        set -ex
+        logdir=/var/log/heat-deployments
+        prefix=${logdir}/config-salt-minion
+        mkdir -p $logdir
+        exec &> >(tee -a ${prefix}.log)
+        [ -e ${prefix}.ran ] && exit 0
+
+        chmod -R 0600 ${logdir}
         chmod 0700 /root/.ssh/coms_rsa
-            
+
         # Add coms from minions to master
         echo "$public_key" >> /root/.ssh/authorized_keys
 
         # Install salt minion
-        curl -L http://bootstrap.saltstack.org | sh -s
+        curl -L http://bootstrap.saltstack.org | sh -s -- git v2014.1.13
         echo master: $master >> /etc/salt/minion
 
         service salt-minion restart
 
         ssh-keyscan -H $master >> /root/.ssh/known_hosts
 
-        echo "Sleeping for 20s"
-        sleep 20
-
         MASTER_PKI_PATH="/etc/salt/pki/master/minions/"
         MASTER_PKI_PATH_PRE="/etc/salt/pki/master/minions_pre/"
         MINION_PKI_PATH="/etc/salt/pki/minion/minion.pub"
-        HOSTNAME=`hostname --fqdn`
+        HOSTNAME="$(python  -c 'import socket; print socket.getfqdn()')"
+
+        while [ ! -s ${MINION_PKI_PATH} ]; do
+            echo "Waiting for ${MINION_PKI_PATH} to have non-zero content."
+            sleep 2
+        done
 
         cp $MINION_PKI_PATH /root/minion_key
 
@@ -251,6 +271,7 @@ resources:
         service salt-minion restart
         rm /root/minion_key
         rm /root/.ssh/coms_rsa
+        touch ${prefix}.ran
 
   # Software deployment for salt-master. Deploys the salt-master software
   # configuration.
@@ -279,7 +300,7 @@ resources:
     properties:
       key_name:
         get_param: keyname
-      image: 
+      image:
         get_param: image
       flavor:
         get_param: flavor
@@ -351,7 +372,7 @@ resources:
               - /var/www/var/session/*
               - /var/www/media/catalog/product/cache*
               - /var/www/var/locks/*
- 
+
         # The magento.sls pillar. Describe database account info for magento
         # This file should have its permissions changed during software
         # Configuration
@@ -401,9 +422,9 @@ resources:
       user_data_format: SOFTWARE_CONFIG
 
   # Associate the master floating ip to the master port
-  master-floating-ip-ass: 
+  master-floating-ip-ass:
     type: OS::Neutron::FloatingIPAssociation
-    properties: 
+    properties:
       floatingip_id:
         get_resource: master-ip
       port_id:
@@ -458,14 +479,14 @@ resources:
   minion-web-haproxy-ip:
     type: OS::Neutron::FloatingIP
     properties:
-      floating_network_id: 
+      floating_network_id:
         get_param: floating-network-id
 
   # Port for haproxy node
   minion-web-haproxy-port:
     type: OS::Neutron::Port
     properties:
-      network_id: 
+      network_id:
         get_resource: net
       security_groups:
         - get_resource: secgroup
@@ -499,7 +520,7 @@ resources:
         /etc/salt/grains: |
           roles:
             - web-haproxy
-      
+
       networks:
         - port:
             get_resource: minion-web-haproxy-port
@@ -508,9 +529,9 @@ resources:
       user_data_format: SOFTWARE_CONFIG
 
   # Associate haproxy floating ip to the port
-  minion-web-haproxy-floating-ip-ass: 
+  minion-web-haproxy-floating-ip-ass:
     type: OS::Neutron::FloatingIPAssociation
-    properties: 
+    properties:
       floatingip_id:
         get_resource: minion-web-haproxy-ip
       port_id:
@@ -706,11 +727,18 @@ resources:
       group: script
       config: |
         #!/bin/bash
+        set -ex
+        logdir=/var/log/heat-deployments
+        prefix=${logdir}/config-deploy
+        mkdir -p $logdir
+        exec &> >(tee -a ${prefix}.log)
+        [ -e ${prefix}.ran ] && exit 0
         cd /srv/salt/sync/files/csync2/
         bash generate_key.sh
         salt '*' mine.update
         salt-run state.sls magento.runner
         salt -G roles:web state.sls magento.web.preinstall
+        touch ${prefix}.ran
 
   # Deploys the the deploy softwareconfig
   # All minions should be spun up and running salt-minion
@@ -733,7 +761,7 @@ resources:
 outputs:
   master-ip:
     description: The salt master. SSH here first to get into the other vms.
-    value: 
+    value:
       get_attr:
         - master-ip
         - floating_ip_address
@@ -751,7 +779,7 @@ outputs:
       get_attr:
         - minion-db-haproxy
         - first_address
-  
+
   minion-web-ips:
     value:
       get_attr:
