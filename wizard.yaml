@@ -1,0 +1,26 @@
+name: Magento
+release: 1.0
+short_desc: |
+  RPC-Heat-Magento delivers a deployable configuration of Magento 1.9.0.1 using the Heat orchestration engine available in any Rackspace OpenStack Private Cloud.
+
+long_desc: |
+  This premier Open Source solution is perfect if you're looking to build a solution on a proven, flexible e-commerce platform. The Magento platform is ready to go for mobile friendly sites, includes billing integration, tools for driving and measuring conversion metrics, and a wide variety of plugins to allow you to fine tailor your shop to your business.
+
+architecture: |
+  Traditional web application models often have difficulties translating to Cloud infrastructure. Larger failure domains, lack of expensive shared storage, and generally less performant instances mean that some of the assumptions we have grown into are no longer applicable in Cloud environments.
+
+  Our Magento architecture is designed to provide a resillient platform to host your ecommerce storefront in a Private Cloud. We have optimized every component of the stack for Cloud Infrastructure. With a deployment driven by the OpenStack Heat orchestration engine and Salt configuration management, we are able to deliver Magento as a repeatable, scalable, production-ready deployment.
+
+design_specs: |
+  - Out of the box performance enhancements made to Magento, Apache, PHP, and MySQL. This includes PHP object caching, Memcached integration, Apache performance configuration settings, and more.
+  - Network isolation and security group isolation at various levels within the stack provide enhanced Cloud security. The database servers are isolated from the web tier DMZ, and only available through a bastion gateway load balancer to furher protect data.
+  - We have found that centralized network file servers have higher failure rates in cloud environments, are more difficult to ensure data integrity, and almost always suffer performance loss. Our architecture utilizes csync2 and lsyncd to push data to other servers on creation events. This minimizes data traffic and allows for substantially more application servers to participate in the cluster. We also utilize sticky sessions on the front end load balancer to maintain user experience while the sync events are taking place.
+  - SSL termination at the load balancer allows for secure customer transactions while not having the added CPU overhead of computing SSL on application instances. Network isolation and firewalling keeps non-ssl traffic isolated from outside networks.
+
+questions: |
+  - keyname: Choose an SSH keypair for access to the Salt Master.
+  - image: Choose an image every instance in the stack will use.
+  - floating-network-id: Choose an external network.
+  - web-count: Choose the number of web application instances.
+  - slave-count: Choose the number of database replication slaves.
+  - flavor: Choose the flavor every instance in the stack will use.
