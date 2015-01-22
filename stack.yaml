@@ -10,6 +10,15 @@ description: |
   apache2, php5, magento, memcached, php-apc, lsyncd, csync2, and xinetd.
   Floating ips will be assigned to the salt-master and web-haproxy nodes.
 
+parameter_groups:
+  - parameters:
+    - keyname
+    - image
+    - floating-network-id
+    - web-count
+    - slave-count
+    - flavor
+
 parameters:
 
   keyname:
