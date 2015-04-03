@@ -296,6 +296,7 @@ resources:
           https://github.com/rcbops/sync-formula.git
           https://github.com/rcbops/mysql-formula.git
           https://github.com/rcbops/magento-formula.git
+          https://github.com/rcbops/base-hardening-formula.git
       config:
         get_resource: config-salt-master
       server:
@@ -381,7 +382,40 @@ resources:
               - /var/www/var/session/*
               - /var/www/media/catalog/product/cache*
               - /var/www/var/locks/*
-
+          user-ports:
+            ssh:
+              chain: INPUT
+              proto: tcp
+              dport: 22
+            salt-master:
+              chain: INPUT
+              proto: tcp
+              dport: 4505
+            salt-minion:
+              chain: INPUT
+              proto: tcp
+              dport: 4506
+            mysql:
+              chain: INPUT
+              proto: tcp
+              dport: 3306
+            http:
+              chain: INPUT
+              proto: tcp
+              dport: 80
+            https:
+              chain: INPUT
+              proto: tcp
+              dport: 443
+            lsyncd:
+              chain: INPUT
+              proto: tcp
+              dport: 30865
+            memcached:
+              chain: INPUT
+              source: 127.0.0.1
+              proto: tcp
+              dport: 11211
         # The magento.sls pillar. Describe database account info for magento
         # This file should have its permissions changed during software
         # Configuration
@@ -747,6 +781,7 @@ resources:
         salt '*' mine.update
         salt-run state.sls magento.runner
         salt -G roles:web state.sls magento.web.preinstall
+        salt -t 90 -l debug '*' state.sls base-hardening-formula.base-hardening-formula
         touch ${prefix}.ran
 
   # Deploys the the deploy softwareconfig
